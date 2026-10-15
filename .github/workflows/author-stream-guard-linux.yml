@@ -1,0 +1,51 @@
+name: Author Linux validation - stream cache guard
+
+on:
+  push:
+    branches: [validation/stream-main-20261015]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  standard:
+    name: Standard suite (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: f783600d77b14d6f9c3a03f7afa3e385cd32ec54
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: true
+      - name: Record exact source
+        run: |
+          mkdir -p "$RUNNER_TEMP/dspy-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/dspy-evidence/source-sha.txt"
+          sha256sum dspy/clients/lm.py dspy/clients/execution.py tests/clients/test_lm.py > "$RUNNER_TEMP/dspy-evidence/source-files.sha256"
+      - name: Install the unchanged locked development environment
+        run: |
+          uv venv .venv
+          uv sync --locked --dev -p .venv --extra dev
+      - name: Standard unit suite using the upstream selection
+        run: uv run --frozen --no-sync -p .venv pytest -m 'not extra and not deno' -n auto --dist worksteal tests/ -q --tb=short --junitxml="$RUNNER_TEMP/dspy-evidence/suite.xml"
+      - name: Ruff without modifying source
+        run: uv run --frozen --no-sync -p .venv ruff check --fix-only --diff --exit-non-zero-on-fix
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: dspy-${{ matrix.python }}
+          path: ${{ runner.temp }}/dspy-evidence/
